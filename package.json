@@ -1,0 +1,10 @@
+{
+  "name": "sina-erp-static",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sina ERP — single-file SPA (React via CDN + Babel Standalone)",
+  "scripts": {
+    "start": "npx serve .",
+    "dev":   "npx serve ."
+  }
+}
