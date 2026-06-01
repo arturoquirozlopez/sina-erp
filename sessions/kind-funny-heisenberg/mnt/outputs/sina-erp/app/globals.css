@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sina-navy: #0F2747;
+  --sina-sky:  #1E88E5;
+}
+html,body { font-family: var(--font-inter), system-ui, sans-serif; background:#F7F8FA; color:#111827; -webkit-font-smoothing:antialiased; }
+.num { font-variant-numeric: tabular-nums; }
+.scrollbar::-webkit-scrollbar{width:6px;height:6px}
+.scrollbar::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:8px}
+.scrollbar::-webkit-scrollbar-track{background:transparent}
+.ring-focus:focus{outline:none;box-shadow:0 0 0 3px rgba(126,184,247,.35);border-color:#1E88E5}
