@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { SinaLogo } from '@/components/brand/sina-logo';
 import type { ProfileWithRole } from '@/lib/types';
-import { can } from '@/lib/auth/permissions';
+import { can } from '@/lib/auth/can';
 import { signOut } from '@/app/(dashboard)/actions';
 import {
   LayoutGrid, Boxes, Users, ShoppingCart, FileText, Wallet, Truck,

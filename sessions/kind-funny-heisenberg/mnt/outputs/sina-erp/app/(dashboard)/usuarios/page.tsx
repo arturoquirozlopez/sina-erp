@@ -52,7 +52,7 @@ export default async function UsuariosPage() {
                 <td className="text-xs">{u.email}</td>
                 <td className="text-xs">{u.cargo}<div className="text-sina-muted">{u.area}</div></td>
                 <td>
-                  <form action={updateUserRoleAction} className="inline-block">
+                  <form action={async (fd) => { await updateUserRoleAction(fd); }} className="inline-block">
                     <input type="hidden" name="id" value={u.id} />
                     <select name="roleId" defaultValue={u.role?.id} className="text-xs px-2 py-1 rounded border border-sina-line bg-white" onChange={(e) => e.currentTarget.form?.requestSubmit()}>
                       {(roles ?? []).map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}

@@ -88,7 +88,7 @@ export default async function ProductoDetailPage({ params }: { params: { id: str
 
           {can(profile, 'inventario.editar') && (
             <Card title="Registrar movimiento">
-              <form action={inventoryMovementAction} className="space-y-3">
+              <form action={async (fd) => { await inventoryMovementAction(fd); }} className="space-y-3">
                 <input type="hidden" name="product_id" value={p.id} />
                 <Select label="Tipo" name="tipo" defaultValue="entrada">
                   <option value="entrada">Entrada</option>
