@@ -697,7 +697,8 @@ function seedAll(){
         ['cotizaciones','ver'],['cotizaciones','crear'],['cotizaciones','editar'],
         ['clientes','ver'],['clientes','crear'],['clientes','editar'],
         ['mensajeria','ver'],['mensajeria','responder'],
-        ['inventario','ver'],['reportes','ver']
+        ['inventario','ver'],['reportes','ver'],
+        ['cobranza','ver'],['cobranza','registrar_pago']
       ]) },
     { id:'R6', nombre:'Operaciones',   descripcion:'Operación diaria y puntos de retiro',
       permisos: setPerm(allPermSet(false), [
@@ -2337,7 +2338,7 @@ function FacturasView({go}){
     }>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         <Input placeholder="Buscar folio, cliente, RUT..." value={q} onChange={e=>setQ(e.target.value)}/>
-        <Select value={estado} onChange={e=>setEstado(e.target.value)}><option value="">Todos</option><option>Pendiente</option><option>Pagada</option></Select>
+        <Select value={estado} onChange={e=>setEstado(e.target.value)}><option value="">Todos</option><option>Pendiente</option><option>Parcialmente pagada</option><option>Pagada</option></Select>
         <div className="text-right text-xs text-sina-muted self-center">{filtered.length} resultado(s)</div>
       </div>
       <table className="w-full text-sm">
@@ -2349,7 +2350,7 @@ function FacturasView({go}){
           <td>{fmtDate(i.fechaVencimiento)}</td>
           <td className="text-right num">{CLP(i.neto)}</td>
           <td className="text-right num font-semibold">{CLP(i.total)}</td>
-          <td><Badge tone={i.estadoPago==='Pagada'?'mint':daysBetween(i.fechaVencimiento,today())>0?'rose':'amber'}>{i.estadoPago==='Pagada'?'Pagada':daysBetween(i.fechaVencimiento,today())>0?'Vencida':'Pendiente'}</Badge></td>
+          <td><Badge tone={i.estadoPago==='Pagada'?'mint':i.estadoPago==='Parcialmente pagada'?'amber':daysBetween(i.fechaVencimiento,today())>0?'rose':'amber'}>{i.estadoPago==='Pagada'?'Pagada':i.estadoPago==='Parcialmente pagada'?'Parcial':daysBetween(i.fechaVencimiento,today())>0?'Vencida':'Pendiente'}</Badge></td>
           <td><Badge tone={i.estadoFactura==='Anulada'?'rose':'sky'}>{i.estadoFactura}</Badge></td>
           <td className="text-right text-xs">
             <button className="text-sina-navy font-semibold mr-2" onClick={()=>setDetail(i)}>Ver</button>
@@ -2409,18 +2410,84 @@ function FacturaDetalle({inv, clients}){
       <summary className="cursor-pointer text-sina-muted font-semibold">Respuesta del proveedor ({inv.providerName||'—'})</summary>
       <pre className="mt-2 bg-sina-bg p-3 rounded-lg overflow-x-auto">{JSON.stringify({providerFolio:inv.providerFolio, trackId:inv.trackId, response:inv.providerResponse},null,2)}</pre>
     </details>
+    <PagosDeFactura invoiceId={inv.id}/>
   </div>;
+}
+
+function PagosDeFactura({invoiceId}){
+  const { state } = useStore();
+  const paid = (state.payments||[]).filter(p=>p.invoiceId===invoiceId);
+  return <Card title="Pagos">
+    {paid.length===0 ? <div className="text-sm text-sina-muted">Sin pagos registrados.</div> :
+      <table className="w-full text-sm"><thead><tr className="text-left text-xs text-sina-muted border-b border-sina-line"><th className="py-2">Fecha</th><th>Método</th><th>Referencia</th><th className="text-right">Monto</th><th></th></tr></thead>
+        <tbody>{paid.map(p=><tr key={p.id} className="border-b border-sina-lineSoft align-top"><td className="py-2">{fmtDate(p.fecha)}</td><td>{p.metodo}</td><td className="font-mono text-xs">{p.referencia}</td><td className={`text-right num ${pagoRechazado(p)?'line-through text-sina-muted':''}`}>{CLP(p.monto)}</td><td className="text-right"><AnularPagoControl pago={p}/></td></tr>)}</tbody>
+      </table>}
+  </Card>;
 }
 
 /* =====================================================================================
    MÓDULO 8 · CUENTAS POR COBRAR Y COBRANZAS
    ===================================================================================== */
+function pagoRechazado(p){ return (p?.estadoValidacion || 'validado') === 'rechazado'; }
+function pagoConciliado(p, bankTransactions){
+  if(!p) return false;
+  if(p.conciliado || p.bankTransactionId) return true;
+  return (bankTransactions||[]).some(t => t.paymentId === p.id);
+}
+function estadoPagoDesdePagos(inv, payments){
+  const paid = (payments||[]).filter(p => p.invoiceId===inv.id && !pagoRechazado(p)).reduce((s,p)=>s+Number(p.monto||0),0);
+  if(paid <= 0) return 'Pendiente';
+  if(paid + 10 >= Number(inv.total||0)) return 'Pagada';
+  return 'Parcialmente pagada';
+}
+function AnularPagoControl({pago}){
+  const { state, dispatch } = useStore();
+  const { can, currentUser } = useAuth();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  if(!can('cobranza','registrar_pago')) return null;
+  if(pagoRechazado(pago)) return <Badge tone="rose">Anulado</Badge>;
+  if(pagoConciliado(pago, state.bankTransactions)){
+    return <span className="text-xs text-sina-amber">Conciliado · desconcilia antes de anular</span>;
+  }
+  const confirmar = () => {
+    const inv = (state.invoices||[]).find(i => i.id === pago.invoiceId);
+    if(!inv){ toast('Factura no encontrada','warn'); return; }
+    const cuando = new Date().toLocaleString('es-CL', { hour12:false });
+    const motivoLimpio = motivo.trim();
+    const pagos = (state.payments||[]).map(p => p.id===pago.id ? {...p, estadoValidacion:'rechazado'} : p);
+    const estadoPago = estadoPagoDesdePagos(inv, pagos);
+    dispatch({type:'UPSERT', collection:'payments', item:{
+      ...pago, estadoValidacion:'rechazado', anuladoMotivo: motivoLimpio || null,
+      anuladoAt: new Date().toISOString(), anuladoPor: currentUser?.id || null,
+    }});
+    dispatch({type:'UPSERT', collection:'invoices', item:{...inv, estadoPago}});
+    dispatch({type:'UPSERT', collection:'auditLog', item:{
+      id: uid('AU'), userId: currentUser?.id || null, accion:'anular_pago_factura', modulo:'cobranza',
+      fecha: today(),
+      detalle: `Folio ${inv.folio} · pago ${CLP(pago.monto)} ${pago.metodo} del ${fmtDate(pago.fecha)} anulado · ${currentUser?.nombre||'usuario'} · ${cuando}${motivoLimpio ? ` · Motivo: ${motivoLimpio}` : ''}`,
+    }});
+    toast(`Pago anulado. La factura quedó ${estadoPago}.`);
+    setOpen(false); setMotivo('');
+  };
+  if(!open) return <button type="button" className="text-sina-rose font-semibold" onClick={()=>setOpen(true)}>Anular pago</button>;
+  return <div className="mt-2 p-2 rounded-lg border border-sina-line bg-sina-bg space-y-2 text-left">
+    <div className="text-xs text-sina-body">¿Anular este pago? Queda en el historial y la factura vuelve a Pendiente o Parcial según el saldo.</div>
+    <Input placeholder="Motivo (opcional)" value={motivo} onChange={e=>setMotivo(e.target.value)} maxLength={500}/>
+    <div className="flex gap-2 justify-end">
+      <Btn type="button" variant="ghost" size="sm" onClick={()=>{setOpen(false); setMotivo('');}}>Cancelar</Btn>
+      <Btn type="button" variant="danger" size="sm" onClick={confirmar}>Confirmar anulación</Btn>
+    </div>
+  </div>;
+}
 function CobranzasView({go}){
   const { state, dispatch } = useStore();
+  const { can, currentUser } = useAuth();
   const { invoices, clients, payments, collectionNotes } = state;
   const [detail,setDetail]=useState(null);
   const toast = useToast();
-  const pendientes = invoices.filter(i=>i.estadoPago==='Pendiente').map(i=>{
+  const pendientes = invoices.filter(i=>i.estadoPago!=='Pagada').map(i=>{
     const c = clients.find(x=>x.id===i.clienteId);
     const dias = daysBetween(i.fechaVencimiento, today());
     const score = Math.max(0,dias)*2 + (i.total/100000);
@@ -2435,8 +2502,11 @@ function CobranzasView({go}){
   });
 
   const registrarPago = (i, monto) => {
-    dispatch({type:'UPSERT', collection:'payments', item:{id:uid('PG'), invoiceId:i.id, fecha:today(), monto, metodo:'Transferencia', referencia:'MANUAL-'+rand(1000,9999)}});
-    dispatch({type:'UPSERT', collection:'invoices', item:{...i, estadoPago: monto>=i.total ? 'Pagada':'Parcialmente pagada'}});
+    const pago = {id:uid('PG'), invoiceId:i.id, fecha:today(), monto, metodo:'Transferencia', referencia:'MANUAL-'+rand(1000,9999), origen:'admin', estadoValidacion:'validado', conciliado:false, bankTransactionId:null};
+    const payments = [...(state.payments||[]), pago];
+    dispatch({type:'UPSERT', collection:'payments', item:pago});
+    dispatch({type:'UPSERT', collection:'invoices', item:{...i, estadoPago: estadoPagoDesdePagos(i, payments)}});
+    dispatch({type:'UPSERT', collection:'auditLog', item:{id:uid('AU'), userId: currentUser?.id || null, accion:'marcar_factura_pagada', modulo:'cobranza', fecha:today(), detalle:`Saldo ${CLP(monto)} · Transferencia`}});
     toast('Pago registrado por '+CLP(monto));
   };
 
@@ -2458,10 +2528,10 @@ function CobranzasView({go}){
           <td className={`text-right font-semibold num ${dias>0?'text-sina-rose':'text-sina-muted'}`}>{dias>0?'+'+dias:dias}</td>
           <td className="text-right num">{CLP(i.total)}</td>
           <td className="text-right num">{Math.round(score)}</td>
-          <td><Badge tone={dias>30?'rose':dias>0?'amber':'sky'}>{dias>0?'Vencida':'Pendiente'}</Badge></td>
+          <td><Badge tone={i.estadoPago==='Parcialmente pagada'?'amber':dias>30?'rose':dias>0?'amber':'sky'}>{i.estadoPago==='Parcialmente pagada'?'Parcial':dias>0?'Vencida':'Pendiente'}</Badge></td>
           <td className="text-right text-xs">
             <button className="text-sina-navy font-semibold mr-2" onClick={()=>setDetail({i,c,dias})}>Gestionar</button>
-            <button className="text-sina-mint font-semibold" onClick={()=>registrarPago(i,i.total)}>Pagar</button>
+            {can('cobranza','registrar_pago') && <button className="text-sina-mint font-semibold" onClick={()=>registrarPago(i,i.total)}>Pagar</button>}
           </td>
         </tr>)}</tbody>
       </table>
@@ -2469,6 +2539,44 @@ function CobranzasView({go}){
     <Modal open={!!detail} onClose={()=>setDetail(null)} title={`Cobranza factura ${detail?.i.folio}`} size="lg">
       {detail && <CobranzaPanel data={detail}/>}
     </Modal>
+  </div>;
+}
+
+function CobranzaPagadasView(){
+  const { state } = useStore();
+  const { invoices, clients, payments } = state;
+  const pagadas = [...invoices].filter(i=>i.estadoPago==='Pagada' || i.estadoPago==='Parcialmente pagada')
+    .sort((a,b)=>String(b.fechaEmision).localeCompare(String(a.fechaEmision)));
+  return <div className="p-8 space-y-6">
+    <Card title="Facturas pagadas" subtitle="Anular un pago marcado por error. La factura vuelve a Pendiente o Parcial y sale de esta lista si ya no queda saldada.">
+      {pagadas.length===0 ? <div className="text-sm text-sina-muted">No hay facturas pagadas ni parciales.</div> :
+        <div className="space-y-6">
+          {pagadas.map(inv=>{
+            const c = clients.find(x=>x.id===inv.clienteId);
+            const pagos = payments.filter(p=>p.invoiceId===inv.id);
+            return <div key={inv.id} className="border-b border-sina-lineSoft pb-4 last:border-0">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <div>
+                  <div className="font-mono text-xs">{inv.folio}</div>
+                  <div className="font-medium">{c?.razonSocial}</div>
+                </div>
+                <div className="num font-semibold">{CLP(inv.total)}</div>
+                <Badge tone={inv.estadoPago==='Pagada'?'mint':'amber'} dot>{inv.estadoPago==='Pagada'?'Pagada':'Parcial'}</Badge>
+              </div>
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-xs text-sina-muted border-b border-sina-line"><th className="py-2">Fecha</th><th>Método</th><th>Referencia</th><th className="text-right">Monto</th><th></th></tr></thead>
+                <tbody>{pagos.map(p=><tr key={p.id} className="border-b border-sina-lineSoft align-top">
+                  <td className="py-2">{fmtDate(p.fecha)}</td>
+                  <td>{p.metodo}</td>
+                  <td className="font-mono text-xs">{p.referencia}</td>
+                  <td className={`text-right num ${pagoRechazado(p)?'line-through text-sina-muted':''}`}>{CLP(p.monto)}</td>
+                  <td className="text-right"><AnularPagoControl pago={p}/></td>
+                </tr>)}</tbody>
+              </table>
+            </div>;
+          })}
+        </div>}
+    </Card>
   </div>;
 }
 
@@ -2484,7 +2592,7 @@ function CobranzaPanel({data}){
   const email = `Estimado/a ${c?.contacto},\n\nLe escribimos desde Sina Pinturas SpA para recordar el pago pendiente de la factura N° ${i.folio} emitida el ${fmtDate(i.fechaEmision)} por un total de ${CLP(i.total)}, con vencimiento ${fmtDate(i.fechaVencimiento)} (${dias} días de atraso).\n\nAgradeceremos su pronta gestión. Quedamos atentos a sus comentarios.\n\nSaludos cordiales,\nÁrea de Cobranzas — Sina Pinturas`;
   return <div className="space-y-4">
     <div className="grid grid-cols-3 gap-3">
-      <Kpi label="Monto adeudado" value={CLP(i.total - paid.reduce((s,p)=>s+p.monto,0))} tone="risk"/>
+      <Kpi label="Monto adeudado" value={CLP(i.total - paid.filter(p=>!pagoRechazado(p)).reduce((s,p)=>s+p.monto,0))} tone="risk"/>
       <Kpi label="Días vencida" value={dias} tone="warn"/>
       <Kpi label="Notas" value={notes.length} tone="neutral"/>
     </div>
@@ -2498,7 +2606,7 @@ function CobranzaPanel({data}){
     </Card>
     <Card title="Historial de pagos">
       {paid.length===0 ? <div className="text-sm text-sina-muted">Sin pagos registrados.</div> :
-       <table className="w-full text-sm"><thead><tr className="text-left text-xs text-sina-muted border-b border-sina-line"><th className="py-2">Fecha</th><th>Método</th><th>Referencia</th><th className="text-right">Monto</th></tr></thead><tbody>{paid.map(p=><tr key={p.id} className="border-b border-sina-lineSoft"><td className="py-2">{fmtDate(p.fecha)}</td><td>{p.metodo}</td><td className="font-mono text-xs">{p.referencia}</td><td className="text-right num">{CLP(p.monto)}</td></tr>)}</tbody></table>}
+       <table className="w-full text-sm"><thead><tr className="text-left text-xs text-sina-muted border-b border-sina-line"><th className="py-2">Fecha</th><th>Método</th><th>Referencia</th><th className="text-right">Monto</th><th>Estado</th><th></th></tr></thead><tbody>{paid.map(p=><tr key={p.id} className="border-b border-sina-lineSoft align-top"><td className="py-2">{fmtDate(p.fecha)}</td><td>{p.metodo}</td><td className="font-mono text-xs">{p.referencia}</td><td className={`text-right num ${pagoRechazado(p)?'line-through text-sina-muted':''}`}>{CLP(p.monto)}</td><td>{pagoRechazado(p)?<Badge tone="rose">Anulado</Badge>:<Badge tone="mint">Validado</Badge>}</td><td className="text-right"><AnularPagoControl pago={p}/></td></tr>)}</tbody></table>}
     </Card>
     <Card title="Notas de gestión">
       <div className="flex gap-2 mb-3">
@@ -2526,10 +2634,12 @@ function ConciliacionView(){
       const candidate = invoices.find(inv=>inv.estadoPago!=='Pagada' && inv.total===tx.monto && Math.abs(daysBetween(inv.fechaEmision, tx.fecha))<60);
       if(candidate){ updates.push({tx, inv:candidate}); }
     });
+    const pagos = [...state.payments];
     updates.forEach(({tx, inv})=>{
-      const p = {id:uid('PG'), invoiceId:inv.id, fecha:tx.fecha, monto:tx.monto, metodo:'Transferencia', referencia:tx.referencia};
+      const p = {id:uid('PG'), invoiceId:inv.id, fecha:tx.fecha, monto:tx.monto, metodo:'Transferencia', referencia:tx.referencia, origen:'admin', estadoValidacion:'validado', conciliado:true, bankTransactionId:tx.id};
+      pagos.push(p);
       dispatch({type:'UPSERT', collection:'payments', item:p});
-      dispatch({type:'UPSERT', collection:'invoices', item:{...inv, estadoPago:'Pagada'}});
+      dispatch({type:'UPSERT', collection:'invoices', item:{...inv, estadoPago: estadoPagoDesdePagos(inv, pagos)}});
       dispatch({type:'UPSERT', collection:'bankTransactions', item:{...tx, conciliado:true, paymentId:p.id}});
     });
     toast(`${updates.length} transacciones conciliadas automáticamente`);
@@ -2598,9 +2708,10 @@ function ConciliarManual({tx, onClose}){
     return (`${i.folio} ${c?.razonSocial} ${c?.rut}`).toLowerCase().includes(q.toLowerCase());
   }).sort((a,b)=>Math.abs(a.total-tx.monto)-Math.abs(b.total-tx.monto)).slice(0,30);
   const confirm = (inv) => {
-    const p={id:uid('PG'), invoiceId:inv.id, fecha:tx.fecha, monto:tx.monto, metodo:'Transferencia', referencia:tx.referencia};
+    const p={id:uid('PG'), invoiceId:inv.id, fecha:tx.fecha, monto:tx.monto, metodo:'Transferencia', referencia:tx.referencia, origen:'admin', estadoValidacion:'validado', conciliado:true, bankTransactionId:tx.id};
+    const pagos=[...(state.payments||[]), p];
     dispatch({type:'UPSERT', collection:'payments', item:p});
-    dispatch({type:'UPSERT', collection:'invoices', item:{...inv, estadoPago: tx.monto>=inv.total?'Pagada':'Parcialmente pagada'}});
+    dispatch({type:'UPSERT', collection:'invoices', item:{...inv, estadoPago: estadoPagoDesdePagos(inv, pagos)}});
     dispatch({type:'UPSERT', collection:'bankTransactions', item:{...tx, conciliado:true, paymentId:p.id}});
     toast('Conciliación registrada'); onClose();
   };
@@ -6135,7 +6246,7 @@ const ROUTES = {
                   tabs:[{id:'cotizaciones',label:'Cotizaciones'},{id:'ordenes',label:'Órdenes de venta'}], def:'cotizaciones' },
   facturacion:  { title:'Facturación',     subtitle:'DTE, folios e IVA' },
   cobranza:     { title:'Cobranza',        subtitle:'Cuentas por cobrar y conciliación bancaria',
-                  tabs:[{id:'cxc',label:'Cuentas por cobrar'},{id:'conciliacion',label:'Conciliación bancaria'}], def:'cxc' },
+                  tabs:[{id:'cxc',label:'Cuentas por cobrar'},{id:'pagadas',label:'Pagadas'},{id:'conciliacion',label:'Conciliación bancaria'}], def:'cxc' },
   compras:      { title:'Compras',         subtitle:'Proveedores, órdenes, cuentas por pagar e inteligencia',
                   tabs:[{id:'proveedores',label:'Proveedores'},{id:'ordenes',label:'Órdenes de compra'},{id:'cxp',label:'Cuentas por pagar'},{id:'inteligencia',label:'Inteligencia de compra'}], def:'proveedores' },
   puntos:       { title:'Puntos de Retiro',  subtitle:'Bodega central, puntos físicos, transferencias y pedidos en retiro',
@@ -6227,6 +6338,7 @@ function Dashboard_(){
           {active==='facturacion' && <FacturasView go={go}/>}
 
           {active==='cobranza'   && tab==='cxc'            && <CobranzasView go={go}/>}
+          {active==='cobranza'   && tab==='pagadas'        && <CobranzaPagadasView/>}
           {active==='cobranza'   && tab==='conciliacion'   && <ConciliacionView/>}
 
           {active==='compras'    && tab==='proveedores'    && <ProveedoresView go={go}/>}

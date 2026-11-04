@@ -47,7 +47,8 @@ insert into public.roles(id, nombre, descripcion, sistema, permisos) values
     'cotizaciones.ver',true,'cotizaciones.crear',true,'cotizaciones.editar',true,
     'clientes.ver',true,'clientes.crear',true,'clientes.editar',true,
     'mensajeria.ver',true,'mensajeria.responder',true,
-    'inventario.ver',true,'reportes.ver',true
+    'inventario.ver',true,'reportes.ver',true,
+    'cobranza.ver',true,'cobranza.registrar_pago',true
   )),
   ('R6','Operaciones','Operación diaria y puntos de retiro', false, jsonb_build_object(
     'inventario.ver',true,'inventario.editar',true,'inventario.transferir',true,

@@ -1,6 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import type { Permission, ProfileWithRole } from '@/lib/types';
+import { can } from '@/lib/auth/can';
+
+export { can };
 
 /** Devuelve el perfil del usuario autenticado (con su rol) o null. */
 export async function getCurrentProfile(): Promise<ProfileWithRole | null> {
@@ -21,15 +24,6 @@ export async function requirePermission(perm: Permission) {
   if (!profile) redirect('/login');
   if (!can(profile, perm)) redirect('/dashboard?error=forbidden');
   return profile;
-}
-
-/** Chequea sin redirigir. Admin siempre true. */
-export function can(profile: ProfileWithRole | null, perm: Permission): boolean {
-  if (!profile) return false;
-  if (profile.role?.nombre === 'Administrador') return true;
-  const ov = profile.permisos_override?.[perm];
-  if (ov != null) return ov;
-  return !!profile.role?.permisos?.[perm];
 }
 
 /** Registra entrada de auditoría. */

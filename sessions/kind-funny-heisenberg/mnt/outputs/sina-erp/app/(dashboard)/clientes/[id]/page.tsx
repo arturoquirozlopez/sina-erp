@@ -67,7 +67,7 @@ export default async function ClienteDetailPage({ params }: { params: { id: stri
 
           <Card title="Notas y seguimiento" className="lg:col-span-2">
             {can(profile, 'clientes.editar') && (
-              <form action={addClienteNotaAction} className="flex gap-2 mb-3">
+              <form action={async (fd) => { await addClienteNotaAction(fd); }} className="flex gap-2 mb-3">
                 <input type="hidden" name="client_id" value={cliente.id} />
                 <Select name="tipo" defaultValue="Llamada" className="!w-32">
                   <option>Llamada</option><option>Visita</option><option>Email</option><option>WhatsApp</option><option>Reunion</option>

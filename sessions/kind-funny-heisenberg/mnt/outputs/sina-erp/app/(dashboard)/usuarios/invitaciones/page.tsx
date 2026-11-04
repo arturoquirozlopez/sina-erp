@@ -41,7 +41,7 @@ export default async function InvitacionesPage() {
       </div>
 
       <Card title="Nueva invitación" subtitle="El usuario recibirá un email con un enlace de activación seguro válido 7 días.">
-        <form action={inviteUserAction} className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <form action={async (fd) => { await inviteUserAction(fd); }} className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Input label="Nombre"   name="firstName" required />
           <Input label="Apellido" name="lastName"  required />
           <Input label="Email"    name="email" type="email" required />
